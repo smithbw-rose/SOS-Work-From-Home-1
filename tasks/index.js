@@ -1,116 +1,160 @@
-// Load environment variables from `.env` file (optional)
 require('dotenv').config();
 
-const slackEventsApi = require('@slack/events-api');
-const SlackClient = require('@slack/client').WebClient;
-const passport = require('passport');
-const LocalStorage = require('node-localstorage').LocalStorage;
-const SlackStrategy = require('@aoberoi/passport-slack').default.Strategy;
-const http = require('http');
+const axios = require('axios');
 const express = require('express');
+const bodyParser = require('body-parser');
+const qs = require('querystring');
+const ticket = require('./break');
+const signature = require('./verifySignature');
+const debug = require('debug')('slash-command-template:index');
 
-// *** Initialize event adapter using signing secret from environment variables ***
-const slackEvents = slackEventsApi.createEventAdapter(process.env.SLACK_SIGNING_SECRET, {
-  includeBody: true
-});
+const apiUrl = 'https://slack.com/api';
 
-// Initialize a Local Storage object to store authorization info
-// NOTE: This is an insecure method and thus for demo purposes only!
-const botAuthorizationStorage = new LocalStorage('./storage');
-
-// Helpers to cache and lookup appropriate client
-// NOTE: Not enterprise-ready. if the event was triggered inside a shared channel, this lookup
-// could fail but there might be a suitable client from one of the other teams that is within that
-// shared channel.
-const clients = {};
-function getClientByTeamId(teamId) {
-  if (!clients[teamId] && botAuthorizationStorage.getItem(teamId)) {
-    clients[teamId] = new SlackClient(botAuthorizationStorage.getItem(teamId));
-  }
-  if (clients[teamId]) {
-    return clients[teamId];
-  }
-  return null;
-}
-
-// Initialize Add to Slack (OAuth) helpers
-passport.use(new SlackStrategy({
-  clientID: process.env.SLACK_CLIENT_ID,
-  clientSecret: process.env.SLACK_CLIENT_SECRET,
-  skipUserProfile: true,
-}, (accessToken, scopes, team, extra, profiles, done) => {
-  botAuthorizationStorage.setItem(team.id, extra.bot.accessToken);
-  done(null, {});
-}));
-
-// Initialize an Express application
 const app = express();
 
-// Plug the Add to Slack (OAuth) helpers into the express app
-app.use(passport.initialize());
+/*
+ * Parse application/x-www-form-urlencoded && application/json
+ * Use body-parser's `verify` callback to export a parsed raw body
+ * that you need to use to verify the signature
+ */
+
+const rawBodyBuffer = (req, res, buf, encoding) => {
+  if (buf && buf.length) {
+    req.rawBody = buf.toString(encoding || 'utf8');
+  }
+};
+
+app.use(bodyParser.urlencoded({verify: rawBodyBuffer, extended: true }));
+app.use(bodyParser.json({ verify: rawBodyBuffer }));
+
 app.get('/', (req, res) => {
-  res.send('<a href="/auth/slack"><img alt="Add to Slack" height="40" width="139" src="https://platform.slack-edge.com/img/add_to_slack.png" srcset="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x" /></a>');
-});
-app.get('/auth/slack', passport.authenticate('slack', {
-  scope: ['bot']
-}));
-app.get('/auth/slack/callback',
-  passport.authenticate('slack', { session: false }),
-  (req, res) => {
-    res.send('<p>Greet and React was successfully installed on your team.</p>');
-  },
-  (err, req, res, next) => {
-    res.status(500).send(`<p>Greet and React failed to install</p> <pre>${err}</pre>`);
-  }
-);
-
-// *** Plug the event adapter into the express app as middleware ***
-app.use('/slack/events', slackEvents.expressMiddleware());
-
-// *** Attach listeners to the event adapter ***
-
-// *** Greeting any user that says "hi" ***
-slackEvents.on('message', (message, body) => {
-  // Only deal with messages that have no subtype (plain messages) and contain 'hi'
-  if (!message.subtype && message.text.indexOf('hi') >= 0) {
-    // Initialize a client
-    const slack = getClientByTeamId(body.team_id);
-    // Handle initialization failure
-    if (!slack) {
-      return console.error('No authorization found for this team. Did you install the app through the url provided by ngrok?');
-    }
-    // Respond to the message back in the same channel
-    slack.chat.postMessage({ channel: message.channel, text: `Hello <@${message.user}>! :tada:` })
-      .catch(console.error);
-  }
+  res.send('<h2>The Slash Command and Dialog app is running</h2> <p>Follow the' +
+  ' instructions in the README to configure the Slack App and your environment variables.</p>');
 });
 
-// *** Responding to reactions with the same emoji ***
-slackEvents.on('reaction_added', (event, body) => {
-  // Initialize a client
-  const slack = getClientByTeamId(body.team_id);
-  // Handle initialization failure
-  if (!slack) {
-    return console.error('No authorization found for this team. Did you install the app through the url provided by ngrok?');
-  }
-  // Respond to the reaction back with the same emoji
-  slack.chat.postMessage({ channel: event.item.channel, text: `:${event.reaction}:` })
-    .catch(console.error);
-});
+/*
+ * Endpoint to receive /szu slash command from Slack.
+ * Checks verification token and opens a dialog to capture more info.
+ */
+app.post('/command', (req, res) => {
+  // extract the slash command text, and trigger ID from payload
+  const { text, trigger_id } = req.body;
 
-// *** Handle errors ***
-slackEvents.on('error', (error) => {
-  if (error.code === slackEventsApi.errorCodes.TOKEN_VERIFICATION_FAILURE) {
-    // This error type also has a `body` propery containing the request body which failed verification.
-    console.error(`An unverified request was sent to the Slack events Request URL. Request body: \
-${JSON.stringify(error.body)}`);
+  // Verify the signing secret
+  if (signature.isVerified(req)) {
+    // create the dialog payload - includes the dialog structure, Slack API token,
+    // and trigger ID
+    const view = {
+      token: process.env.SLACK_ACCESS_TOKEN,
+      trigger_id,
+      view: JSON.stringify({
+        type: 'modal',
+        title: {
+          type: 'plain_text',
+          text: 'Create a break room'
+        },
+        callback_id: 'submit-ticket',
+        submit: {
+          type: 'plain_text',
+          text: 'Go!'
+        },
+        blocks: [
+          {
+            block_id: 'title_block',
+            type: 'input',
+            label: {
+              type: 'plain_text',
+              text: 'Name'
+            },
+            element: {
+              action_id: 'title',
+              type: 'plain_text_input'
+            },
+            hint: {
+              type: 'plain_text',
+              text: 'This will be your username in the break room!'
+            }
+          },
+          {
+            block_id: 'urgency_block',
+            type: 'input',
+            label: {
+              type: 'plain_text',
+              text: 'Activity type:'
+            },
+            element: {
+              action_id: 'urgency',
+              type: 'static_select',
+              options: [
+                {
+                  text: {
+                    type: "plain_text",
+                    text: "Codenames"
+                  },
+                  value: "High"
+                },
+                {
+                  text: {
+                    type: "plain_text",
+                    text: "Explore"
+                  },
+                  value: "medium"
+                },
+                {
+                  text: {
+                    type: "plain_text",
+                    text: "Random"
+                  },
+                  value: "low"
+                }
+              ]
+            },
+            optional: true
+          }
+        ]
+      })
+    };
+
+    console.log('open view')
+
+    // open the dialog by calling dialogs.open method and sending the payload
+    axios.post(`${apiUrl}/views.open`, qs.stringify(view))
+      .then((result) => {
+        debug('views.open: %o', result.data);
+        res.send('');
+      }).catch((err) => {
+        debug('views.open call failed: %o', err);
+        res.sendStatus(500);
+      });
   } else {
-    console.error(`An error occurred while handling a Slack event: ${error.message}`);
+    debug('Verification token mismatch');
+    res.sendStatus(404);
   }
 });
 
-// Start the express application
-const port = process.env.PORT || 3000;
-http.createServer(app).listen(port, () => {
-  console.log(`server listening on port ${port}`);
+/*
+ * Endpoint to receive the modal submission. Checks the verification token
+ * and creates a Helpdesk ticket
+ */
+app.post('/interactive', (req, res) => {
+  const body = JSON.parse(req.body.payload);
+
+  // check that the verification token matches expected value
+  if (signature.isVerified(req)) {
+    debug(`Form submission received: ${body.view}`);
+
+    // immediately respond with a empty 200 response to let
+    // Slack know the command was received
+    res.send('');
+
+    // create Helpdesk ticket
+    ticket.create(body.user.id, body.view);
+  } else {
+    debug('Token mismatch');
+    res.sendStatus(404);
+  }
+});
+
+const server = app.listen(process.env.PORT || 5000, () => {
+  console.log('Express server listening on port %d in %s mode', server.address().port, app.settings.env);
 });
