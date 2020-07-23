@@ -1,0 +1,16 @@
+{
+    "name": "Slack Slash Command Blueprint",
+    "description": "A sample Slack app that implements a skeleton helpdesk integration using a Slash Command and Dialog",
+    "repository": "https://github.com/slackapi/template-slash-command-and-dialogs",
+    "website": "https://api.slack.com/best-practices/blueprints/slash-command-and-dialogs",
+    "logo": "https://a.slack-edge.com/f30f/img/services/api_200.png",
+    "keywords": ["node", "express", "slack", "slash command"],
+    "env": {
+      "SLACK_ACCESS_TOKEN": {
+        "description": "xoxb-1230284425955-1251212415606-ekSA7ZolrTmsmP3ifz9E7hBd"
+      },
+      "SLACK_VERIFICATION_TOKEN": {
+        "description": "t6ucNiLKkiWT209lQILgETn9"
+      }
+    }
+  }
