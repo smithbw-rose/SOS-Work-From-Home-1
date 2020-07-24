@@ -7,10 +7,10 @@
     "keywords": ["node", "express", "slack", "slash command"],
     "env": {
       "SLACK_ACCESS_TOKEN": {
-        "description": "xoxb-1230284425955-1251212415606-ekSA7ZolrTmsmP3ifz9E7hBd"
+        "description": "Slack Access Token"
       },
       "SLACK_VERIFICATION_TOKEN": {
-        "description": "t6ucNiLKkiWT209lQILgETn9"
+        "description": "Slack Verification Token"
       }
     }
   }

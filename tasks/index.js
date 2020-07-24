@@ -4,7 +4,7 @@ const axios = require('axios');
 const express = require('express');
 const bodyParser = require('body-parser');
 const qs = require('querystring');
-const ticket = require('./break');
+const ticket = require('./ticket');
 const signature = require('./verifySignature');
 const debug = require('debug')('slash-command-template:index');
 
@@ -13,7 +13,6 @@ const apiUrl = 'https://slack.com/api';
 const app = express();
 
 /*
- * Parse application/x-www-form-urlencoded && application/json
  * Use body-parser's `verify` callback to export a parsed raw body
  * that you need to use to verify the signature
  */
@@ -51,12 +50,12 @@ app.post('/command', (req, res) => {
         type: 'modal',
         title: {
           type: 'plain_text',
-          text: 'Create a break room'
+          text: 'Create a break!'
         },
         callback_id: 'submit-ticket',
         submit: {
           type: 'plain_text',
-          text: 'Go!'
+          text: 'Submit'
         },
         blocks: [
           {
@@ -72,7 +71,7 @@ app.post('/command', (req, res) => {
             },
             hint: {
               type: 'plain_text',
-              text: 'This will be your username in the break room!'
+              text: 'This will be a temporary username.'
             }
           },
           {
@@ -80,7 +79,7 @@ app.post('/command', (req, res) => {
             type: 'input',
             label: {
               type: 'plain_text',
-              text: 'Activity type:'
+              text: 'Break type'
             },
             element: {
               action_id: 'urgency',
@@ -91,12 +90,12 @@ app.post('/command', (req, res) => {
                     type: "plain_text",
                     text: "Codenames"
                   },
-                  value: "High"
+                  value: "high"
                 },
                 {
                   text: {
                     type: "plain_text",
-                    text: "Explore"
+                    text: "Google earth explore"
                   },
                   value: "medium"
                 },
@@ -121,7 +120,7 @@ app.post('/command', (req, res) => {
     axios.post(`${apiUrl}/views.open`, qs.stringify(view))
       .then((result) => {
         debug('views.open: %o', result.data);
-        res.send('');
+        res.send('A break room has been created with a theme of "Codenames!"\nFollow the link to join:\nhttp://creativemode-breaktest1.s3-website.us-east-2.amazonaws.com/new/#');
       }).catch((err) => {
         debug('views.open call failed: %o', err);
         res.sendStatus(500);
@@ -134,8 +133,9 @@ app.post('/command', (req, res) => {
 
 /*
  * Endpoint to receive the modal submission. Checks the verification token
- * and creates a Helpdesk ticket
+ * and creates a Szunet room.
  */
+
 app.post('/interactive', (req, res) => {
   const body = JSON.parse(req.body.payload);
 
@@ -147,7 +147,7 @@ app.post('/interactive', (req, res) => {
     // Slack know the command was received
     res.send('');
 
-    // create Helpdesk ticket
+    // creates log of Szunet room
     ticket.create(body.user.id, body.view);
   } else {
     debug('Token mismatch');
